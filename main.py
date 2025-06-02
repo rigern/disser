@@ -1,13 +1,11 @@
-import pandas as pd
 import numpy as np
 import re, time, pywt
-from scipy.interpolate import CubicSpline, Rbf, PchipInterpolator
+from scipy.interpolate import CubicSpline, Rbf
 from scipy.fft import fft, fftfreq, ifft
 from decimal import Decimal
 import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 from second_window import SecondWindow
-np.set_printoptions(suppress=True)
 
 class ListVar:
     def __init__(self):
@@ -39,10 +37,19 @@ def toFixed(nums):
 def read_from_csv(path_to_file):
     
     try:
+        # file1 = open(path_to_file, "r")
+        # reader = csv.reader(file1)
+        # return list(reader)
         file1 = open(path_to_file, "r")
         lines = file1.readlines()
+        
+        lines_of_traces = []
+        for line in lines:
+            if len(line) > 2:
+                lines_of_traces.append(line.replace('\x00', ''))
+                
         file1.close
-        return lines
+        return lines_of_traces
     
     except FileNotFoundError:
         messagebox.showerror("Ошибка", "Произошла ошибка! Файл не найдет.")
@@ -76,25 +83,25 @@ def inter_by_parts(path_to_file, method_interpolation):
     
     end = 0
     if tk_end.get() == 0:
-        end = len_trace - 1
+        end = len_trace
     else:
         end = tk_end.get()
             
     if len(threshold) == 0:
-        if method_interpolation == "Фурье": 
-            threshold = end / 5
-        if method_interpolation == "Rbf": 
-            threshold = 0.2
-        if method_interpolation == "Вейвлет": 
-            threshold = "db7"
-    
+        if method_interpolation == "Фурье":
+            threshold = end / 10
+        if method_interpolation == "Адаптивная интерполяция":
+            threshold = 0.3
+        if method_interpolation == "Вейвлет":
+            threshold = "db12"
+
     for trace in traces:
         l = trace.split(',')
         t = l.pop(0)
         time_it_trace = l.pop(-2)
         last_element.append(l.pop(-1))
         l_float_full = [float(item) for item in l]
-        l_float = [float(l[item]) for item in range (begin, end+1)]
+        l_float = [float(l[item]) for item in range (begin, end)]
         y_t = []
         
         if method_interpolation == "Вейвлет":
@@ -103,40 +110,66 @@ def inter_by_parts(path_to_file, method_interpolation):
             # Пороговая обработка (удаление шума)
             sigma = np.median(np.abs(cs[-1])) / 0.6745
             # Универсальный порог
-            threshold_t = sigma * np.sqrt(2 * np.log(len(l_float)))
-            cs_thresh = [pywt.threshold(c, threshold_t, mode='soft') for c in cs]
+            threshold_t = sigma * np.sqrt(5 * np.log(len(l_float)))
+
+            cs_thresh = [cs[0]] + [pywt.threshold(c, threshold_t, mode='hard') for c in cs[1:]]
 
             # Восстановление сигнала
             y_t = pywt.waverec(cs_thresh, threshold)
             
         elif method_interpolation == "Фурье":
+            threshold = float(threshold)
             fs = len(l_float)
             #Прямое Фурье
             y = fft(np.array(l_float))
             freqs = fftfreq(fs, 1/fs)
-            h = np.exp(-0.5 * (np.abs(freqs) / threshold)**2) 
             # Фильтр: обнуляем частоты выше переменной threshold
-            y_filtered = y.copy()
-            y_filtered = y.copy() * h
-            #y_filtered[np.abs(freqs) > float(threshold)] = 0
+            # h = np.exp(-0.2 * (np.abs(freqs) / threshold)**2)
+            
+            h = np.sqrt(0.2 * (np.abs(freqs) / threshold)**2)
+            window = np.hanning(len(y))
+            y_filtered = y.copy() * (h - window)
+            
+            # y_filtered = y.copy()
+            # y_filtered = y.copy() * (np.abs(freqs) <= h)
 
             # Обратное Фурье
             y_t = np.real(ifft(y_filtered))
+            
+        elif method_interpolation == "CubicSpline":
+            x = np.linspace(0, len(l_float) - 1, len(l_float))
+            y = np.array(l_float)
+
+            cs = CubicSpline(x, y, bc_type='natural')
+                
+            x_new = np.linspace(0, len(x) - 1, (len(x)*4))
+            #x_new = np.linspace(0, len(x) - 1, (len(x)))
+            y_new = cs(x_new)
+            
+            # for i in range(int(len(y_new)/3)):
+            #     y_t.append((y_new[3*i] + y_new[3*i+1] + y_new[3*i+2]) / 3)
+                
+            for i in range(int(len(y_new)/4)):
+                y_t.append((y_new[4*i] + y_new[4*i+1] + y_new[4*i+2] + y_new[4*i+3]) / 4)
+            
+            # for i in range(int(len(y_new))):
+            #     y_t.append(y_new[i])
+                
         else:
             x = np.linspace(0, len(l_float) - 1, len(l_float))
             y = np.array(l_float)
 
-            cs = Rbf(x, y, function='multiquadric', smooth=float(threshold))
+            cs = Rbf(x, y, function='gaussian', smooth=float(threshold))
                 
-            #x_new = np.linspace(0, len(x) - 1, (len(x)*4))
-            x_new = np.linspace(0, len(x) - 1, (len(x)))
+            x_new = np.linspace(0, len(x) - 1, (len(x)*4))
+            #x_new = np.linspace(0, len(x) - 1, (len(x)))
             y_new = cs(x_new)
                 
-            # for i in range(int(len(y_new)/4)):
-            #     y_t.append((y_new[4*i] + y_new[4*i+1] + y_new[4*i+2] + y_new[4*i+3]) / 4)
+            for i in range(int(len(y_new)/4)):
+                y_t.append((y_new[4*i] + y_new[4*i+1] + y_new[4*i+2] + y_new[4*i+3]) / 4)
             
-            for i in range(int(len(y_new))):
-                y_t.append(y_new[i])
+            # for i in range(int(len(y_new))):
+            #     y_t.append(y_new[i])
             
         y_t = toFixed(y_t)
         l_float_full[begin:end+1] = y_t
@@ -148,7 +181,7 @@ def inter_by_parts(path_to_file, method_interpolation):
     for i in new_array:
         s = re.sub(r'[^0-9.o: -]', '', str(i))
         s = s.replace(" ", ", ").replace(" ,", "")
-        s = s.replace(".00", "")
+        #s = s.replace(".00", "")
         q += s + ',' + last_element[0]
         
     q += trace_time
@@ -156,9 +189,9 @@ def inter_by_parts(path_to_file, method_interpolation):
     execution_time = end_time - start_time
     tk_time.set("Время выполнения функции: " + str(round(Decimal(execution_time), 2)) + " сек")
     tk_s.set(q)
+    
     messagebox.showinfo("Успех", "Операция закончена.")
     
-    return new_array, trace_time, last_element
     
 def full_inter(path_to_file, method_interpolation):
     start_time = time.time()
@@ -212,7 +245,7 @@ def full_inter(path_to_file, method_interpolation):
                 y = np.array(part)
                 cs = CubicSpline(x, y, bc_type='not-a-knot')
                 
-                if method_interpolation == "Rbf":
+                if method_interpolation == "Адаптивная интерполяция":
                     cs = Rbf(x, y, function='multiquadric', smooth=float(threshold))
                 
                 x_new = np.linspace(0, len(x) - 1, (len(x)*4))
@@ -309,9 +342,9 @@ label = ttk.Label(textvariable=tk_message_file_path, font=("Arial", 14))
 #label.pack()
 
 # Выпадающий список выбора метода интерполяции
-method_interpol = ["Вейвлет", "Rbf", "Фурье"]
+method_interpol = ["Фурье", "Адаптивная интерполяция", "Вейвлет", "CubicSpline"]
 method_interpol_var = tk.StringVar(value=method_interpol[0])
-combobox = ttk.Combobox(textvariable=method_interpol_var, values=method_interpol)
+combobox = ttk.Combobox(textvariable=method_interpol_var, values=method_interpol, width=25)
 combobox.pack()
 
 # Кнопка открытия второго окна
@@ -323,7 +356,7 @@ inter_button = tk.Button(root, text="Выполнить", command=lambda: inter_
 inter_button.pack(pady=20)
 
 label = ttk.Label(textvariable=tk_time, font=("Arial", 14))
-label.pack()
+#label.pack()
 
 # Кнопка для записи в csv
 wtite_to_csv_button = tk.Button(root, text="Записать в csv", command=lambda: save_file())

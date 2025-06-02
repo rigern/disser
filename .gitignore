@@ -1,2 +1,6 @@
 /src
 1.py
+2.py
+command_nuitka.txt
+/dist
+__pycache__
