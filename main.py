@@ -91,9 +91,9 @@ def inter_by_parts(path_to_file, method_interpolation):
         if method_interpolation == "Фурье":
             threshold = end / 10
         if method_interpolation == "Адаптивная интерполяция":
-            threshold = 0.3
+            threshold = 0.25
         if method_interpolation == "Вейвлет":
-            threshold = "db12"
+            threshold = "db16"
 
     for trace in traces:
         l = trace.split(',')
@@ -106,32 +106,28 @@ def inter_by_parts(path_to_file, method_interpolation):
         
         if method_interpolation == "Вейвлет":
             cs = pywt.wavedec(np.array(l_float), threshold)
-            
+                
             # Пороговая обработка (удаление шума)
-            sigma = np.median(np.abs(cs[-1])) / 0.6745
+            sigma = [np.median(np.abs(c)) / 0.6745 for c in cs[1:]]
             # Универсальный порог
-            threshold_t = sigma * np.sqrt(5 * np.log(len(l_float)))
+            threshold_t = [s * np.sqrt(2 * np.log(len(c))) for s, c in zip(sigma, cs[1:])]
 
-            cs_thresh = [cs[0]] + [pywt.threshold(c, threshold_t, mode='hard') for c in cs[1:]]
+            cs_thresh = [cs[0]] + [pywt.threshold(c, th, mode='soft') for c, th in zip(cs[1:], threshold_t)]
 
             # Восстановление сигнала
             y_t = pywt.waverec(cs_thresh, threshold)
-            
+        
         elif method_interpolation == "Фурье":
             threshold = float(threshold)
             fs = len(l_float)
+            
             #Прямое Фурье
             y = fft(np.array(l_float))
             freqs = fftfreq(fs, 1/fs)
-            # Фильтр: обнуляем частоты выше переменной threshold
-            # h = np.exp(-0.2 * (np.abs(freqs) / threshold)**2)
             
-            h = np.sqrt(0.2 * (np.abs(freqs) / threshold)**2)
+            h = np.sqrt(0.4 * (np.abs(freqs) / threshold)**2)
             window = np.hanning(len(y))
             y_filtered = y.copy() * (h - window)
-            
-            # y_filtered = y.copy()
-            # y_filtered = y.copy() * (np.abs(freqs) <= h)
 
             # Обратное Фурье
             y_t = np.real(ifft(y_filtered))
@@ -143,18 +139,11 @@ def inter_by_parts(path_to_file, method_interpolation):
             cs = CubicSpline(x, y, bc_type='natural')
                 
             x_new = np.linspace(0, len(x) - 1, (len(x)*4))
-            #x_new = np.linspace(0, len(x) - 1, (len(x)))
             y_new = cs(x_new)
-            
-            # for i in range(int(len(y_new)/3)):
-            #     y_t.append((y_new[3*i] + y_new[3*i+1] + y_new[3*i+2]) / 3)
                 
             for i in range(int(len(y_new)/4)):
                 y_t.append((y_new[4*i] + y_new[4*i+1] + y_new[4*i+2] + y_new[4*i+3]) / 4)
-            
-            # for i in range(int(len(y_new))):
-            #     y_t.append(y_new[i])
-                
+                            
         else:
             x = np.linspace(0, len(l_float) - 1, len(l_float))
             y = np.array(l_float)
@@ -162,15 +151,11 @@ def inter_by_parts(path_to_file, method_interpolation):
             cs = Rbf(x, y, function='gaussian', smooth=float(threshold))
                 
             x_new = np.linspace(0, len(x) - 1, (len(x)*4))
-            #x_new = np.linspace(0, len(x) - 1, (len(x)))
             y_new = cs(x_new)
                 
             for i in range(int(len(y_new)/4)):
                 y_t.append((y_new[4*i] + y_new[4*i+1] + y_new[4*i+2] + y_new[4*i+3]) / 4)
-            
-            # for i in range(int(len(y_new))):
-            #     y_t.append(y_new[i])
-            
+        
         y_t = toFixed(y_t)
         l_float_full[begin:end+1] = y_t
         l_float_full = np.append(l_float_full, time_it_trace)
@@ -191,8 +176,7 @@ def inter_by_parts(path_to_file, method_interpolation):
     tk_s.set(q)
     
     messagebox.showinfo("Успех", "Операция закончена.")
-    
-    
+  
 def full_inter(path_to_file, method_interpolation):
     start_time = time.time()
     traces = read_from_csv(path_to_file)
@@ -322,7 +306,7 @@ def update_response(response_text):
     
 # Создаем основное окно
 root = tk.Tk()
-root.title("Интерполяция георадарограмм")
+root.title("Восстановление данных радарограмм")
 root.geometry("600x400")
 
 tk_new_array = ListVar()
@@ -342,7 +326,7 @@ label = ttk.Label(textvariable=tk_message_file_path, font=("Arial", 14))
 #label.pack()
 
 # Выпадающий список выбора метода интерполяции
-method_interpol = ["Фурье", "Адаптивная интерполяция", "Вейвлет", "CubicSpline"]
+method_interpol = ["Фурье", "Адаптивная интерполяция", "Вейвлет"]
 method_interpol_var = tk.StringVar(value=method_interpol[0])
 combobox = ttk.Combobox(textvariable=method_interpol_var, values=method_interpol, width=25)
 combobox.pack()
